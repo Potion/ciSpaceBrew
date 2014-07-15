@@ -101,21 +101,15 @@ namespace cinder {
         : app( app ),
             host( "ws://" + host + ":" + to_string(SPACEBREW_PORT) ),
             bConnected( false ),
-            reconnectInterval( 2000 ),
+            reconnectInterval( 3 ),
             bAutoReconnect( false ),
             lastTimeTriedConnect( 0 ),
-            config( Config( name, description ) )
+            config( Config( name, description ) ),
+			client(nullptr)
         {
             updateConnection = this->app->getSignalUpdate().connect( std::bind( &Connection::update, this ) ) ;
-            //TODO: See if we can add a listener here to websocketpp cinder to automate this
-            //WebSocketPP Interface
-            client.addConnectCallback( &Connection::onConnect, this );
-            client.addDisconnectCallback( &Connection::onDisconnect, this );
-            client.addErrorCallback( &Connection::onError, this );
-            client.addInterruptCallback( &Connection::onInterrupt, this );
-            client.addPingCallback( &Connection::onPing, this );
-            client.addReadCallback( &Connection::onRead, this );
             
+            createClient();
         }
         
         Connection::~Connection()
@@ -123,23 +117,48 @@ namespace cinder {
             updateConnection.disconnect();
         }
         
+		void Connection::createClient()
+		{
+			// remove the client if it already exists
+			// then create a new one
+			if (client != nullptr) {
+				for (auto callbackID : callbackIDs) {
+					client->removeCallback(callbackID);
+				}
+				client->disconnect();
+				delete client;
+				client = nullptr;
+			}
+			
+			client = new WebSocketClient();
+            callbackIDs.push_back(client->addConnectCallback( &Connection::onConnect, this ));
+			callbackIDs.push_back(client->addDisconnectCallback( &Connection::onDisconnect, this ));
+			callbackIDs.push_back(client->addErrorCallback( &Connection::onError, this ));
+			callbackIDs.push_back(client->addInterruptCallback( &Connection::onInterrupt, this ));
+			callbackIDs.push_back(client->addPingCallback( &Connection::onPing, this ));
+			callbackIDs.push_back(client->addReadCallback( &Connection::onRead, this ));
+		}
 
         void Connection::update()
         {
-            client.poll();
+            client->poll();
             
             if ( bAutoReconnect ) {
               
                 if ( !bConnected && this->app->getElapsedSeconds() - lastTimeTriedConnect > reconnectInterval) {
                    
-                    connect( host, config );
+//                    connect( host, config );
+					ci::app::console() << "attempting reconnect" << std::endl;
+					bConnected = true;
+					createClient();
+					connect();
                 }
             }
         }
         
         void Connection::connect()
         {
-            client.connect( host );
+            client->connect( host );
         }
         
         void Connection::connect( const string &host, const Config &config )
@@ -147,7 +166,7 @@ namespace cinder {
             this->host = "ws://" + host + ":" + to_string(SPACEBREW_PORT);
             this->config = config;
             
-            client.connect( this->host );
+            client->connect( this->host );
         }
         
         void Connection::send( const string &name, const string &type, const string &value )
@@ -194,7 +213,7 @@ namespace cinder {
         void Connection::send( const Message &m )
         {
             if ( bConnected ) {
-                client.write( m.getJSON( config.name ) );
+                client->write( m.getJSON( config.name ) );
             } else {
                 cerr << "Send failed, not connected!" << endl;
             }
@@ -203,7 +222,7 @@ namespace cinder {
         void Connection::send( Message* m )
         {
             if ( bConnected ) {
-                client.write( m->getJSON( config.name ) );
+                client->write( m->getJSON( config.name ) );
             } else {
                 cerr << "Send failed, not connected!" << endl;
             }
@@ -268,7 +287,7 @@ namespace cinder {
         
         void Connection::updatePubSub()
         {
-            client.write( config.getJSON() );
+            client->write( config.getJSON() );
         }
         
         string Connection::getHost()
@@ -278,7 +297,8 @@ namespace cinder {
         
         void Connection::onConnect(  )
         {
-            bConnected = "true";
+			ci::app::console() << "connected" << std::endl;
+            bConnected = true;
             updatePubSub();
         }
         
@@ -292,6 +312,8 @@ namespace cinder {
         void Connection::onError( const string &err )
         {
             cout << "error: " << err << endl;
+			bConnected = false;
+			lastTimeTriedConnect = this->app->getElapsedSeconds();
         }
         
         void Connection::onRead( const string &stuff )

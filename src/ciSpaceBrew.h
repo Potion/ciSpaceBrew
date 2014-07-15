@@ -291,7 +291,10 @@ namespace cinder {
             int lastTimeTriedConnect;
             int reconnectInterval;
             
-            WebSocketClient client;
+            WebSocketClient *client;
+			
+			std::vector<uint32_t> callbackIDs;
+			void createClient();
             
         };
             
